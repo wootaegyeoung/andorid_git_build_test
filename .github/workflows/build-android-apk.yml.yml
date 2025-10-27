@@ -1,0 +1,92 @@
+name: Build & Release Android APK
+
+on:
+  push:
+    branches: [ main ]          # main에 push되면 빌드(아티팩트 업로드)
+    tags:     [ 'v*.*.*' ]      # vX.Y.Z 태그 push면 빌드 + Release 업로드
+  workflow_dispatch:
+
+permissions:
+  contents: write               # Release/태그 쓰기 권한
+
+env:
+  ANDROID_COMPILE_SDK: 35       # Android 15.0 (API 35)
+  ANDROID_BUILD_TOOLS: 35.0.0
+  JAVA_VERSION: '17'
+  APP_MODULE_PATH: app          # 모듈명이 다르면 바꿔주세요 (예: app, mobile 등)
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Gradle cache
+        uses: gradle/gradle-build-action@v2
+
+      # Android SDK 설치 (cmdline-tools + 빌드툴)
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install Build Tools
+        run: |
+          sdkmanager --install "build-tools;${{ env.ANDROID_BUILD_TOOLS }}" \
+                                 "platforms;android-${{ env.ANDROID_COMPILE_SDK }}"
+
+      # (릴리즈 서명) keystore 복원 (Secrets 필요)
+      - name: Restore keystore
+        run: echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > my-release.keystore
+        env:
+          ANDROID_KEYSTORE_BASE4: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        # 주의: 위 KEY 이름 오타 방지 위해 아래 줄 사용
+        shell: bash
+
+      # 태그/브랜치에 따라 버전 추출
+      - name: Compute version from ref
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            # refs/tags/v1.2.3 → v1.2.3
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            # main push인 경우 커밋 SHA 앞 7자리 등으로 임시 버전
+            VERSION="dev-${GITHUB_SHA:0:7}"
+          fi
+          echo "version=${VERSION#v}" >> $GITHUB_OUTPUT   # v 접두어 제거한 순수 숫자만
+          echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Build release APK
+        run: |
+          export KEYSTORE_PATH="$GITHUB_WORKSPACE/my-release.keystore"
+          ./gradlew clean :${{ env.APP_MODULE_PATH }}:assembleRelease \
+            -PversionName=${{ steps.ver.outputs.version }} \
+            -PversionCode=${{ github.run_number }}
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS:         ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD:      ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+      # 항상 워크플로 아티팩트로 올려두기 (main push 때도 확인 가능)
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ steps.ver.outputs.version }}
+          path: ${{ env.APP_MODULE_PATH }}/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      # 태그 push일 때만 GitHub Release 생성 + APK 업로드
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          files: ${{ env.APP_MODULE_PATH }}/build/outputs/apk/release/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
