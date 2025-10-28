@@ -10,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId "com.example.test"
-        minSdk 35   // NOTE: 이렇게 높으면 Android 15 이상에서만 설치됨. 필요에 맞게 낮춰도 됨
+        minSdk 24   // NOTE: 이렇게 높으면 Android 15 이상에서만 설치됨. 필요에 맞게 낮춰도 됨
         targetSdk 36
 
         // ⬇️ GitHub Actions에서 -PversionName/-PversionCode로 주입(없으면 기본값)

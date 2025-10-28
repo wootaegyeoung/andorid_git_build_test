@@ -2,28 +2,27 @@ name: Build & Release Android APK
 
 on:
   push:
-    tags: [ 'v*.*.*' ]     # 태그 push일 때만 실행
-  workflow_dispatch:        # (선택) 수동 실행
+    tags: ['v*.*.*']        # 태그 push 시 자동 실행
+  workflow_dispatch:         # 수동 실행도 허용
 
 permissions:
   contents: write
 
 env:
-  ANDROID_COMPILE_SDK: 35
-  ANDROID_BUILD_TOOLS: 35.0.0
+  ANDROID_COMPILE_SDK: 36        # ← 앱과 맞춤
+  ANDROID_BUILD_TOOLS: 36.0.0    # ← 36 계열 사용 (설치 가능 버전으로)
   JAVA_VERSION: '17'
-  APP_MODULE_PATH: app      # 모듈명이 다르면 변경
-  APP_DIR: .                # gradlew가 있는 폴더(루트가 아니면 예: android)
+  APP_MODULE_PATH: app
+  APP_DIR: .
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout (with tags)
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0         # 태그 정보 포함해서 체크아웃
+          fetch-depth: 0
 
       - name: Set up JDK
         uses: actions/setup-java@v4
@@ -41,9 +40,9 @@ jobs:
         run: |
           sdkmanager --install "build-tools;${{ env.ANDROID_BUILD_TOOLS }}" "platforms;android-${{ env.ANDROID_COMPILE_SDK }}"
 
-      # 시크릿이 없으면 스킵 (무서명 빌드)
+      # Keystore 복원: 시크릿이 "존재할 때만" (빈 문자열/미정의 모두 제외)
       - name: Restore keystore (only if secret exists)
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 && secrets.ANDROID_KEYSTORE_BASE64 != '' }}
         run: echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > my-release.keystore
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -52,21 +51,31 @@ jobs:
         run: chmod +x gradlew
         working-directory: ${{ env.APP_DIR }}
 
-      - name: Compute version from tag
+      # 태그에서 버전 추출 + 수동실행 대응 (fallback)
+      - name: Compute version
         id: ver
+        shell: bash
         run: |
-          echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT   # v 접두어 제거
-          echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            # 예: v1.2.3 -> 1.2.3
+            VERSION="${GITHUB_REF_NAME#v}"
+            TAG="${GITHUB_REF_NAME}"
+          else
+            # 수동실행/브랜치 등: YYYYMMDD.HHMM 형태로 만듬 (원하면 변경)
+            VERSION="$(date +'%Y%m%d.%H%M')-manual"
+            TAG="manual-${VERSION}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
       - name: Build release APK
         run: |
-          # keystore가 복원된 경우에만 경로 export (없어도 문제 없음)
           if [ -f "$GITHUB_WORKSPACE/my-release.keystore" ]; then
             export KEYSTORE_PATH="$GITHUB_WORKSPACE/my-release.keystore"
           fi
           ./gradlew clean :${{ env.APP_MODULE_PATH }}:assembleRelease \
-            -PversionName=${{ steps.ver.outputs.version }} \
-            -PversionCode=${{ github.run_number }}
+            -PversionName='${{ steps.ver.outputs.version }}' \
+            -PversionCode='${{ github.run_number }}'
         working-directory: ${{ env.APP_DIR }}
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -80,7 +89,9 @@ jobs:
           path: ${{ env.APP_DIR }}/${{ env.APP_MODULE_PATH }}/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
+      # 태그일 때만 릴리즈 생성 (수동 실행으로는 아티팩트만 남김)
       - name: Create GitHub Release
+        if: ${{ github.ref_type == 'tag' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
