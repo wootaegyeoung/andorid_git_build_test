@@ -40,10 +40,15 @@ jobs:
         run: |
           sdkmanager --install "build-tools;${{ env.ANDROID_BUILD_TOOLS }}" "platforms;android-${{ env.ANDROID_COMPILE_SDK }}"
 
-      # Keystore 복원: 시크릿이 "존재할 때만" (빈 문자열/미정의 모두 제외)
-      - name: Restore keystore (only if secret exists)
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 && secrets.ANDROID_KEYSTORE_BASE64 != '' }}
-        run: echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > my-release.keystore
+      - name: Restore keystore (skip if secret is empty)
+        run: |
+          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            echo "Keystore secret found. Restoring..."
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > my-release.keystore
+            ls -l my-release.keystore
+          else
+            echo "No ANDROID_KEYSTORE_BASE64 provided. Skipping keystore restore."
+          fi
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
