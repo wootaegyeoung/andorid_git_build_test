@@ -4,40 +4,73 @@ plugins {
 
 android {
     namespace 'com.example.test'
+
+    // 워크플로우(API 35)와 일치
     compileSdk 36
 
     defaultConfig {
         applicationId "com.example.test"
-        minSdk 35
+
+        // 너무 높으면 설치 대상이 줄어듦. 필요에 맞게 조정(예: 24~26 권장)
+        minSdk 26
         targetSdk 36
-        versionCode 1
-        versionName "1.0"
+
+        // GitHub Actions에서 -PversionName / -PversionCode로 주입 (없으면 기본값)
+        def verName = project.findProperty("versionName") ?: "dev"
+        def verCode = (project.findProperty("versionCode") ?: "1").toInteger()
+        versionName verName
+        versionCode verCode
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    // CI 환경변수(시크릿) 기반 릴리즈 서명 — 없으면 무서명으로 빌드됨
+    signingConfigs {
+        release {
+            def ksPath = System.getenv("KEYSTORE_PATH")
+            def sp = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            def ka = System.getenv("ANDROID_KEY_ALIAS")
+            def kp = System.getenv("ANDROID_KEY_PASSWORD")
+            if (ksPath && sp && ka && kp) {
+                storeFile file(ksPath)
+                storePassword sp
+                keyAlias ka
+                keyPassword kp
+            }
+        }
     }
 
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+
+            // 모든 값이 있을 때만 릴리즈 서명 연결
+            if (signingConfigs.findByName("release")?.storeFile != null) {
+                signingConfig signingConfigs.release
+            }
         }
+        debug { }
     }
+
+    // 워크플로우와 동일(JDK 17)
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_11
-        targetCompatibility JavaVersion.VERSION_11
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
+
     buildFeatures {
         viewBinding true
     }
 }
 
 dependencies {
-
     implementation libs.appcompat
     implementation libs.material
     implementation libs.constraintlayout
     implementation libs.navigation.fragment
     implementation libs.navigation.ui
+
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core

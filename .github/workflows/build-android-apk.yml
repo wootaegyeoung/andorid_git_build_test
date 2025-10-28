@@ -2,18 +2,18 @@ name: Build & Release Android APK
 
 on:
   push:
-    tags: ['v*.*.*']        # 태그 push 시 자동 실행
-  workflow_dispatch:         # 수동 실행도 허용
+    tags: ['v*.*.*']         # 태그 push일 때 실행 (예: v1.2.3)
+  workflow_dispatch:          # (옵션) 수동 실행 허용 — 원치 않으면 이 줄 삭제
 
 permissions:
   contents: write
 
 env:
-  ANDROID_COMPILE_SDK: 36        # ← 앱과 맞춤
-  ANDROID_BUILD_TOOLS: 36.0.0    # ← 36 계열 사용 (설치 가능 버전으로)
+  ANDROID_COMPILE_SDK: 35
+  ANDROID_BUILD_TOOLS: 35.0.0
   JAVA_VERSION: '17'
-  APP_MODULE_PATH: app
   APP_DIR: .
+  APP_MODULE_PATH: app
 
 jobs:
   build:
@@ -40,6 +40,7 @@ jobs:
         run: |
           sdkmanager --install "build-tools;${{ env.ANDROID_BUILD_TOOLS }}" "platforms;android-${{ env.ANDROID_COMPILE_SDK }}"
 
+      # Keystore 복원: 시크릿이 있으면 복원, 없으면 스킵(무서명 빌드)
       - name: Restore keystore (skip if secret is empty)
         run: |
           if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
@@ -56,17 +57,14 @@ jobs:
         run: chmod +x gradlew
         working-directory: ${{ env.APP_DIR }}
 
-      # 태그에서 버전 추출 + 수동실행 대응 (fallback)
-      - name: Compute version
+      - name: Compute version (from tag or manual)
         id: ver
         shell: bash
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            # 예: v1.2.3 -> 1.2.3
-            VERSION="${GITHUB_REF_NAME#v}"
+            VERSION="${GITHUB_REF_NAME#v}"   # v 접두어 제거
             TAG="${GITHUB_REF_NAME}"
           else
-            # 수동실행/브랜치 등: YYYYMMDD.HHMM 형태로 만듬 (원하면 변경)
             VERSION="$(date +'%Y%m%d.%H%M')-manual"
             TAG="manual-${VERSION}"
           fi
@@ -75,6 +73,7 @@ jobs:
 
       - name: Build release APK
         run: |
+          # keystore가 복원된 경우에만 경로 export
           if [ -f "$GITHUB_WORKSPACE/my-release.keystore" ]; then
             export KEYSTORE_PATH="$GITHUB_WORKSPACE/my-release.keystore"
           fi
@@ -87,15 +86,15 @@ jobs:
           ANDROID_KEY_ALIAS:         ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD:      ${{ secrets.ANDROID_KEY_PASSWORD }}
 
-      - name: Upload workflow artifact
+      - name: Upload workflow artifact (APK)
         uses: actions/upload-artifact@v4
         with:
           name: apk-${{ steps.ver.outputs.version }}
           path: ${{ env.APP_DIR }}/${{ env.APP_MODULE_PATH }}/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
-      # 태그일 때만 릴리즈 생성 (수동 실행으로는 아티팩트만 남김)
-      - name: Create GitHub Release
+      # 태그일 때만 릴리즈 생성 + APK 첨부
+      - name: Create GitHub Release (tag only)
         if: ${{ github.ref_type == 'tag' }}
         uses: softprops/action-gh-release@v2
         with:
